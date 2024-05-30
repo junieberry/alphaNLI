@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import torch
@@ -51,18 +52,20 @@ def evaluate_model(model, data, mode="valid"):
     wandb.log({f"{mode}_accuracy": acc})
     if mode == "valid":
         wandb.log({f"{mode}_loss": sum(losses) / len(losses)})
-        return sum(losses) / len(losses)
+    return acc
 
 
 def finetune(args):
     wandb.init(
         project="alphaNLI",
         entity="junieberry",
+        tags=[f"shuffle_{args.shuffle_type}", "shuffle"],
         config=vars(args),
     )
 
     data_path = Path(args.data_dir)
     checkpoint_path = Path(args.output_dir) / wandb.run.name
+    os.makedirs(checkpoint_path, exist_ok=True)
 
     print(f"Loading Data...")
     train_data, valid_data, dev_data, train_labels, valid_labels, dev_labels = load_data(data_path)
@@ -73,9 +76,9 @@ def finetune(args):
     model = AutoModelForSequenceClassification.from_pretrained(args.model_name, config=config)
     model.to(args.device)
 
-    train_dataset = AnliTrainDataset(train_data, train_labels, tokenizer)
-    valid_dataset = AnliTrainDataset(valid_data, valid_labels, tokenizer)
-    test_dataset = AnliTrainDataset(dev_data, dev_labels, tokenizer)
+    train_dataset = AnliTrainDataset(train_data, train_labels, tokenizer, args.shuffle_type)
+    valid_dataset = AnliTrainDataset(valid_data, valid_labels, tokenizer, args.shuffle_type)
+    test_dataset = AnliTrainDataset(dev_data, dev_labels, tokenizer, args.shuffle_type)
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=data_collator)
     valid_dataloader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=data_collator)
@@ -95,6 +98,7 @@ def finetune(args):
             best_score = val_loss
             torch.save(model.state_dict(), checkpoint_path / "best_model.pt")
 
+    print("Loading the best model...")
     model.load_state_dict(torch.load(checkpoint_path / "best_model.pt"))
     evaluate_model(model, test_dataloader, mode="test")
 
