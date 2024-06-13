@@ -33,14 +33,22 @@ def train_model(model, data, optimizer, scheduler):
     wandb.log({"epoch_loss": sum(losses) / len(losses)})
 
 
-def evaluate_model(model, data, mode="valid"):
+def softmax(x):
+    return torch.exp(x) / torch.sum(torch.exp(x), dim=1).unsqueeze(1)
+
+
+def evaluate_model(model, data, mode="valid", save_logits=False):
     model.eval()
     predictions, labels, losses = [], [], []
+    logits = []
     for batch in tqdm(data, desc="Evaluating..."):
         for k, v in batch.items():
             batch[k] = v.to(args.device)
         outputs = model(**batch)
         predictions += outputs.logits.argmax(dim=-1).tolist()
+        if save_logits:
+            logits += softmax(outputs.logits).tolist()
+
         labels += batch["labels"].tolist()
 
         if mode == "valid":
@@ -52,6 +60,8 @@ def evaluate_model(model, data, mode="valid"):
     wandb.log({f"{mode}_accuracy": acc})
     if mode == "valid":
         wandb.log({f"{mode}_loss": sum(losses) / len(losses)})
+    if save_logits:
+        return acc, logits
     return acc
 
 
@@ -59,7 +69,7 @@ def finetune(args):
     wandb.init(
         project="alphaNLI",
         entity="junieberry",
-        tags=[f"shuffle_{args.shuffle_type}", "shuffle"],
+        tags=[f"shuffle_{args.shuffle_type}"],
         config=vars(args),
     )
 
@@ -76,9 +86,9 @@ def finetune(args):
     model = AutoModelForSequenceClassification.from_pretrained(args.model_name, config=config)
     model.to(args.device)
 
-    train_dataset = AnliTrainDataset(train_data, train_labels, tokenizer, args.shuffle_type)
-    valid_dataset = AnliTrainDataset(valid_data, valid_labels, tokenizer, args.shuffle_type)
-    test_dataset = AnliTrainDataset(dev_data, dev_labels, tokenizer, args.shuffle_type)
+    train_dataset = AnliTrainDataset(train_data, train_labels, tokenizer, args.shuffle_type, mode="train")
+    valid_dataset = AnliTrainDataset(valid_data, valid_labels, tokenizer, args.shuffle_type, mode="valid")
+    test_dataset = AnliTrainDataset(dev_data, dev_labels, tokenizer, args.shuffle_type, mode="test")
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=data_collator)
     valid_dataloader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=data_collator)
@@ -88,19 +98,28 @@ def finetune(args):
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=100, num_training_steps=len(
         train_dataloader) * args.epochs)
 
-    best_score = 10000
-    print(f"Training Model...")
-    for epoch in range(args.epochs):
-        print(f"\n\n{epoch} Epoch...")
-        train_model(model, train_dataloader, optimizer, scheduler)
-        val_loss = evaluate_model(model, valid_dataloader, mode="valid")
-        if val_loss < best_score:
-            best_score = val_loss
-            torch.save(model.state_dict(), checkpoint_path / "best_model.pt")
+    best_score = 0
+    try:
+        print(f"Training Model...")
+        for epoch in range(args.epochs):
+            print(f"\n\n{epoch} Epoch...")
+            train_model(model, train_dataloader, optimizer, scheduler)
+            val_loss = evaluate_model(model, valid_dataloader, mode="valid")
+            if val_loss > best_score:
+                best_score = val_loss
+                torch.save(model.state_dict(), checkpoint_path / "best_model.pt")
 
-    print("Loading the best model...")
-    model.load_state_dict(torch.load(checkpoint_path / "best_model.pt"))
-    evaluate_model(model, test_dataloader, mode="test")
+        print("Loading the best model...")
+        model.load_state_dict(torch.load(checkpoint_path / "best_model.pt"))
+        acc, logits = evaluate_model(model, test_dataloader, mode="test", save_logits=True)
+        with open(data_path / f"predictions_shuffle_{args.shuffle_type}.json", "w") as f:
+            json.dump(logits, f)
+
+    # if keyboard interrupt evaluate the model on test set
+    except KeyboardInterrupt:
+        print("Loading the best model...")
+        model.load_state_dict(torch.load(checkpoint_path / "best_model.pt"))
+        evaluate_model(model, test_dataloader, mode="test")
 
 
 if __name__ == '__main__':

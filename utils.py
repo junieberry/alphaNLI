@@ -30,10 +30,10 @@ def get_args():
     parser.add_argument('--data_dir', type=str, default='data/alphanli-train-dev', help='data directory')
     parser.add_argument('--output_dir', type=str, default='checkpoints', help='output directory')
     parser.add_argument('--model_name', type=str, default='microsoft/deberta-v3-base', help='model name')
-    parser.add_argument("--shuffle_type", type=str, default=['hyp', 'hyp_obs'], help='shuffle type')
+    parser.add_argument("--shuffle_type", type=str, help='shuffle type')
     # train
     parser.add_argument('--device', type=str, default='cuda', help='device')
-    parser.add_argument('--epochs', type=int, default=10, help='number of epochs')
+    parser.add_argument('--epochs', type=int, default=2, help='number of epochs')
     parser.add_argument('--batch_size', type=int, default=64, help='batch size')
     parser.add_argument('--lr', type=float, default=5e-5, help='learning rate')
     parser.add_argument("--tags", nargs='+', help='wandb tags')
